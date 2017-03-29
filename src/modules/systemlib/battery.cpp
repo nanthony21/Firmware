@@ -173,10 +173,10 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 	// choose which quantity we're using for final reporting
 	if (_param_capacity.get() > 0.0f) and (current_a>=0.0f){ //if we have a known capacity and the current measurement was valid
 
-		float dt = ((float)(timestamp - _last_timestamp)) / 1e3f ;
+		float dt = timestamp - _last_timestamp ; //the time elapsed since the last time this function ran. (in microseconds).
 		_last_timestamp = timestamp;
 		//complementary filter
-		_remaining = 0.9998f*(_remaining-(_current_a*dt/_param_capacity.get()*3600))+.0002f*_remaining_voltage;
+		_remaining = 0.9998f*(_remaining-(_current_a*dt/_param_capacity.get()*(1e-3f/3600f))+.0002f*_remaining_voltage; //1e-3/3600 is to convert from Amp Microseconds to Milliamp Hours. It is equal to 1e3 Milliamps/Amp * 1e-6 Seconds/Microseconds / 3600 Seconds/Hour
 		
 	} else {
 		// else use only voltage
