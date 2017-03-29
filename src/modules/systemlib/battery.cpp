@@ -175,7 +175,13 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 	_remaining_voltage = (_remaining_voltage > 1.0f) ? 1.0f : _remaining_voltage;
 
 	// choose which quantity we're using for final reporting
+	if (_param_capacity.get() > 0.0f) and (current_a>=0.0f){ //if we have a known capacity and the current measurement was valid
 
+		float dt = ((float)(timestamp - _last_timestamp)) / 1e3f ;
+		_last_timestamp = timestamp;
+		//complementary filter
+		_remaining = 0.9998f*(_remaining-(_current_a*dt/_param_capacity.get()*3600))+.0002f*_remaining_voltage;
+		
 	} else {
 		// else use voltage
 		_remaining = _remaining_voltage;
