@@ -90,8 +90,7 @@ Battery::updateBatteryStatus(hrt_abstime timestamp, float voltage_v, float curre
 	battery_status->timestamp = timestamp;
 	filterVoltage(voltage_v);
 	filterCurrent(current_a);
-	sumDischarged(timestamp, current_a);
-	estimateRemaining(voltage_v, current_a, throttle_normalized, armed);
+	estimateRemaining(voltage_v, current_a, throttle_normalized, armed, timestamp);
 	determineWarning();
 	computeScale();
 
@@ -138,28 +137,8 @@ Battery::filterCurrent(float current_a)
 	}
 }
 
-
 void
-Battery::sumDischarged(hrt_abstime timestamp, float current_a)
-{
-	// Not a valid measurement
-	if (current_a < 0.0f) {
-		// Because the measurement was invalid we need to stop integration
-		// and re-initialize with the next valid measurement
-		_last_timestamp = 0;
-		return;
-	}
-
-	// Ignore first update because we don't know dT.
-	if (_last_timestamp != 0) {
-		_discharged_mah += current_a * ((float)(timestamp - _last_timestamp)) / 1e3f / 3600.0f;
-	}
-
-	_last_timestamp = timestamp;
-}
-
-void
-Battery::estimateRemaining(float voltage_v, float current_a, float throttle_normalized, bool armed)
+Battery::estimateRemaining(float voltage_v, float current_a, float throttle_normalized, bool armed,hrt_abstime timestamp)
 {
 	const float bat_r = _param_r_internal.get();
 
