@@ -168,26 +168,13 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 		_remaining_voltage = rvoltage_filt;
 	}
 
-	// remaining battery capacity based on used current integrated time
-	const float rcap = 1.0f - _discharged_mah / _param_capacity.get();
-	const float rcap_filt = _remaining_capacity * 0.99f + rcap * 0.01f;
-
-	if (PX4_ISFINITE(rcap_filt)) {
-		_remaining_capacity = rcap_filt;
 	}
 
 	// limit to sane values
 	_remaining_voltage = (_remaining_voltage < 0.0f) ? 0.0f : _remaining_voltage;
 	_remaining_voltage = (_remaining_voltage > 1.0f) ? 1.0f : _remaining_voltage;
 
-	_remaining_capacity = (_remaining_capacity < 0.0f) ? 0.0f : _remaining_capacity;
-	_remaining_capacity = (_remaining_capacity > 1.0f) ? 1.0f : _remaining_capacity;
-
 	// choose which quantity we're using for final reporting
-	if (_param_capacity.get() > 0.0f) {
-		// if battery capacity is known, use discharged current for estimate,
-		// but don't show more than voltage estimate
-		_remaining = fminf(_remaining_voltage, _remaining_capacity);
 
 	} else {
 		// else use voltage
