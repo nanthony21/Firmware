@@ -171,7 +171,7 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 	_remaining_voltage = (_remaining_voltage > 1.0f) ? 1.0f : _remaining_voltage;
 
 	// choose which quantity we're using for final reporting
-	if (_param_capacity.get() > 0.0f) and (current_a>=0.0f){ //if we have a known capacity and the current measurement was valid
+	if ((_param_capacity.get() > 0.0f) and (current_a>=0.0f) and (armed)){ //if we are armed, have a known capacity and the current measurement was valid. The complementary filter is only useful when the load on the battery is changing quickly so there is no point in doing it if not armed. This also helps the _remaining value to quickly settle at the correct value before takeoff.
 
 		float dt = timestamp - _last_timestamp ; //the time elapsed since the last time this function ran. (in microseconds).
 		_last_timestamp = timestamp;
