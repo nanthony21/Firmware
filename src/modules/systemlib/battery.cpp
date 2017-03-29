@@ -160,14 +160,10 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 	const float voltage_range = (_param_v_full.get() - _param_v_empty.get());
 
 	// remaining battery capacity based on voltage
-	const float rvoltage = (voltage_v - (_param_n_cells.get() * bat_v_empty_dynamic))
-			       / (_param_n_cells.get() * voltage_range);
-	const float rvoltage_filt = _remaining_voltage * 0.99f + rvoltage * 0.01f;
+	const float rvoltage = (voltage_v - (_param_n_cells.get() * bat_v_empty_dynamic)) / (_param_n_cells.get() * voltage_range);
 
-	if (PX4_ISFINITE(rvoltage_filt)) {
-		_remaining_voltage = rvoltage_filt;
-	}
-
+	if (PX4_ISFINITE(rvoltage) {
+		_remaining_voltage = rvoltage;
 	}
 
 	// limit to sane values
@@ -183,8 +179,8 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 		_remaining = 0.9998f*(_remaining-(_current_a*dt/_param_capacity.get()*3600))+.0002f*_remaining_voltage;
 		
 	} else {
-		// else use voltage
-		_remaining = _remaining_voltage;
+		// else use only voltage
+		_remaining = 0.99f*_remaining+0.01f*_remaining_voltage;
 	}
 }
 
