@@ -162,9 +162,9 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 	// remaining battery capacity based on voltage
 	const float rvoltage = (voltage_v - (_param_n_cells.get() * bat_v_empty_dynamic)) / (_param_n_cells.get() * voltage_range);
 
-	if (PX4_ISFINITE(rvoltage) {
+    if (PX4_ISFINITE(rvoltage)) {
 		_remaining_voltage = rvoltage;
-	}
+    }
 
 	// limit to sane values
 	_remaining_voltage = (_remaining_voltage < 0.0f) ? 0.0f : _remaining_voltage;
@@ -176,7 +176,7 @@ Battery::estimateRemaining(float voltage_v, float current_a, float throttle_norm
 		float dt = timestamp - _last_timestamp ; //the time elapsed since the last time this function ran. (in microseconds).
 		_last_timestamp = timestamp;
 		//complementary filter
-		_remaining = 0.9998f*(_remaining-(_current_a*dt/_param_capacity.get()*(1e-3f/3600f))+.0002f*_remaining_voltage; //1e-3/3600 is to convert from Amp Microseconds to Milliamp Hours. It is equal to 1e3 Milliamps/Amp * 1e-6 Seconds/Microseconds / 3600 Seconds/Hour
+        _remaining = 0.9998f*(_remaining-(current_a*dt/_param_capacity.get()*1e-3f/3600.0f))+.0002f*_remaining_voltage; //1e-3/3600 is to convert from Amp Microseconds to Milliamp Hours. It is equal to 1e3 Milliamps/Amp * 1e-6 Seconds/Microseconds / 3600 Seconds/Hour
 		
 	} else {
 		// else use only voltage
