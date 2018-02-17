@@ -1864,6 +1864,16 @@ MPU6000::check_registers(void)
 int
 MPU6000::measure()
 {
+    /*
+     1: Check if conditions a right for us to be running this function
+     2: Check status register to see if new gyro data is available. If not, return.
+     3: Receive sensor data and feed to gyro LPF and gyro integrator.
+     4: If data has been downsampled to 1kHz then send out gyro rate data.
+     5: If gyro integrator has completed an integration cycle then send out delta angle data.
+     6: Check if accelerometer data is new data or a duplicate. If it is duplicate then there is no need to process the data, return.
+     7: Feed accelerometer data to LPF and integrator.
+     8: If acceleromter integrator has completed an integration cycle then transmit a message containing the integrated delta V and the filtered accelerometer data.
+     */
 	if (_in_factory_test) {
 		// don't publish any data while in factory test mode
 		return OK;
@@ -1874,6 +1884,11 @@ MPU6000::measure()
 		return OK;
 	}
 
+    /* start measuring */
+    perf_begin(_sample_perf);
+    
+    //Step 2
+    
 	struct MPUReport mpu_report;
 
 	struct Report {
@@ -1886,10 +1901,8 @@ MPU6000::measure()
 		int16_t		gyro_z;
 	} report;
 
-	/* start measuring */
-	perf_begin(_sample_perf);
-
-	/*
+    //Step 3
+    /*
 	 * Fetch the full set of measurements from the MPU6000 in one pass.
 	 */
 
@@ -2013,6 +2026,7 @@ MPU6000::measure()
 	math::Vector<3> gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
 	math::Vector<3> gval_integrated;
     
+    //Step 4
     static downsample_counter = 0;
     downsample_counter++;
     if (downsample_counter >= _gyro_downsample_ratio){//time to report gyro readings
@@ -2020,7 +2034,7 @@ MPU6000::measure()
         
     }
     
-    
+    //Step 5
 	bool gyro_int_notify = _gyro_int.put(grb.timestamp, gval, gval_integrated, grb.integral_dt);
 	grb.x_integral = gval_integrated(0);
 	grb.y_integral = gval_integrated(1);
@@ -2047,7 +2061,7 @@ MPU6000::measure()
 		orb_publish(ORB_ID(sensor_gyro), _gyro->_gyro_topic, &grb);
 	}
 
-    /*
+    /* Step 6:
      see if this is duplicate accelerometer data. Note that we
      can't use the data ready interrupt status bit in the status
      register as that also goes high on new gyro data, and when
@@ -2103,6 +2117,7 @@ MPU6000::measure()
         math::Vector<3> aval(x_in_new, y_in_new, z_in_new);
         math::Vector<3> aval_integrated;
         
+        //Step 8
         bool accel_notify = _accel_int.put(arb.timestamp, aval, aval_integrated, arb.integral_dt);
         arb.x_integral = aval_integrated(0);
         arb.y_integral = aval_integrated(1);
