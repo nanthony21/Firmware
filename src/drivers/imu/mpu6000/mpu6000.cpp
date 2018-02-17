@@ -199,6 +199,8 @@ private:
 	float			_gyro_range_rad_s;
 
 	unsigned		_sample_rate;
+    unsigned int    _currentMaxSampleRate;
+    
 	perf_counter_t		_accel_reads;
 	perf_counter_t		_gyro_reads;
 	perf_counter_t		_sample_perf;
@@ -408,7 +410,7 @@ private:
 	void 			_set_icm_acc_dlpf_filter(uint16_t frequency_hz);
 
 	/*
-	  set sample rate (approximate) - 1kHz to 5Hz
+	  set sample rate (approximate) - 8kHz to 5Hz
 	*/
 	void			_set_sample_rate(unsigned desired_sample_rate_hz);
 
@@ -500,7 +502,8 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	_gyro_scale{},
 	_gyro_range_scale(0.0f),
 	_gyro_range_rad_s(0.0f),
-	_sample_rate(1000),
+	_sample_rate(MPU6000_GYRO_DEFAULT_RATE),
+    _currentMaxSampleRate(MPU6000_GYRO_DEFAULT_RATE),
 	_accel_reads(perf_alloc(PC_COUNT, "mpu6k_acc_read")),
 	_gyro_reads(perf_alloc(PC_COUNT, "mpu6k_gyro_read")),
 	_sample_perf(perf_alloc(PC_ELAPSED, "mpu6k_read")),
@@ -929,12 +932,18 @@ MPU6000::probe()
 }
 
 /*
-  set sample rate (approximate) - 1kHz to 5Hz, for both accel and gyro
+  set sample rate (approximate) - 1kHz to 5Hz, for both accel and gyro. If dlpf is disabled then gyro = 8kHz and accel = 1kHz
 */
 void
 MPU6000::_set_sample_rate(unsigned desired_sample_rate_hz)
 {
-	if (desired_sample_rate_hz == 0 ||
+    if (_currentMaxSampleRate == 8000){
+        write_checked_reg(MPUREG_SMPLRT_DIV, 0); //This is just in case. The datasheets were inconsistent on the behaviour of SMPLRT_DIV when DLPF is disabled.
+        _sample_rate = 8000; //sample rate cannot be divided when dlpf is disabled
+        return;
+    }
+    
+    if (desired_sample_rate_hz == 0 ||
 	    desired_sample_rate_hz == GYRO_SAMPLERATE_DEFAULT ||
 	    desired_sample_rate_hz == ACCEL_SAMPLERATE_DEFAULT) {
 		desired_sample_rate_hz = MPU6000_GYRO_DEFAULT_RATE;
@@ -957,13 +966,15 @@ void
 MPU6000::_set_dlpf_filter(uint16_t frequency_hz)
 {
 	uint8_t filter;
-
+    unsigned int new_currentMaxSampleRate = 1000;
 	/*
 	   choose next highest filter frequency available
 	 */
+    
 	if (frequency_hz == 0) {
 		filter = MPU_GYRO_DLPF_CFG_2100HZ_NOLPF;
-
+        new_currentMaxSampleRate = 8000;
+        
 	} else if (frequency_hz <= 5) {
 		filter = MPU_GYRO_DLPF_CFG_5HZ;
 
@@ -984,11 +995,18 @@ MPU6000::_set_dlpf_filter(uint16_t frequency_hz)
 
 	} else if (frequency_hz <= 256) {
 		filter = MPU_GYRO_DLPF_CFG_256HZ_NOLPF2;
+        new_currentMaxSampleRate = 8000;
 
 	} else {
 		filter = MPU_GYRO_DLPF_CFG_2100HZ_NOLPF;
+        new_currentMaxSampleRate = 8000;
 	}
 
+    if (new_currentMaxSampleRate != _currentMaxSampleRate){ //The internal sampling rate has been changed so SMPLRT_DIV needs to be recalculated
+        _currentMaxSampleRate = new_currentMaxSampleRate;
+        _set_sample_rate(_sample_rate);
+    }
+    
 	write_checked_reg(MPUREG_CONFIG, filter);
 }
 
@@ -1398,17 +1416,17 @@ MPU6000::ioctl(struct file *filp, int cmd, unsigned long arg)
 					unsigned ticks = 1000000 / arg;
 
 					/* check against maximum sane rate */
-					if (ticks < 1000) {
+					if (ticks < 1000000 / _currentMaxSampleRate) {
 						return -EINVAL;
 					}
 
 					// adjust filters
 					float cutoff_freq_hz = _accel_filter_x.get_cutoff_freq();
 					float sample_rate = 1.0e6f / ticks;
-					_set_dlpf_filter(cutoff_freq_hz);
 
 					if (is_icm_device()) {
-						_set_icm_acc_dlpf_filter(cutoff_freq_hz);
+						_set_icm_acc_dlpf_filter(cutoff_freq_hz); /*Might as well set the hardware low pass filter too since
+                        the ICM can filter accel data without lowering the gyro data rate by turning on the gyro DLPF.*/
 					}
 
 					_accel_filter_x.set_cutoff_frequency(sample_rate, cutoff_freq_hz);
@@ -1417,7 +1435,6 @@ MPU6000::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 
 					float cutoff_freq_hz_gyro = _gyro_filter_x.get_cutoff_freq();
-					_set_dlpf_filter(cutoff_freq_hz_gyro);
 					_gyro_filter_x.set_cutoff_frequency(sample_rate, cutoff_freq_hz_gyro);
 					_gyro_filter_y.set_cutoff_frequency(sample_rate, cutoff_freq_hz_gyro);
 					_gyro_filter_z.set_cutoff_frequency(sample_rate, cutoff_freq_hz_gyro);
