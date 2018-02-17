@@ -182,6 +182,7 @@ private:
 
 	struct hrt_call		_call;
 	unsigned		_call_interval;
+    uint8_t         _gyro_downsample_ratio;
 
 	ringbuffer::RingBuffer	*_accel_reports;
 
@@ -491,6 +492,7 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 #endif
 	_call {},
 	_call_interval(0),
+    _gyro_downsample_ratio(0),
 	_accel_reports(nullptr),
 	_accel_scale{},
 	_accel_range_scale(0.0f),
@@ -522,7 +524,7 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	_gyro_filter_y(MPU6000_GYRO_DEFAULT_RATE, MPU6000_GYRO_DEFAULT_DRIVER_FILTER_FREQ),
 	_gyro_filter_z(MPU6000_GYRO_DEFAULT_RATE, MPU6000_GYRO_DEFAULT_DRIVER_FILTER_FREQ),
 	_accel_int(1000000 / MPU6000_ACCEL_MAX_OUTPUT_RATE),
-	_gyro_int(1000000 / MPU6000_GYRO_MAX_OUTPUT_RATE, true),
+	_gyro_int(1000000 / MPU6000_DELTA_ANGLE_MAX_OUTPUT_RATE, true),
 	_rotation(rotation),
 	_checked_next(0),
 	_in_factory_test(false),
@@ -1443,7 +1445,13 @@ MPU6000::ioctl(struct file *filp, int cmd, unsigned long arg)
 					/* update interval for next measurement */
 					/* XXX this is a bit shady, but no other way to adjust... */
 					_call_interval = ticks;
-
+                
+                    if (_currentMaxSampleRate == 8000){
+                        _gyro_downsample_ratio = 8;
+                    }
+                    else{ //Sampling at 1kHz. no need to downsample
+                        _gyro_downsample_ratio = 1;
+                    }
 					/*
 					  set call interval faster then the sample time. We
 					  then detect when we have duplicate samples and reject
@@ -2004,8 +2012,16 @@ MPU6000::measure()
 
 	math::Vector<3> gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
 	math::Vector<3> gval_integrated;
-
-	bool gyro_notify = _gyro_int.put(grb.timestamp, gval, gval_integrated, grb.integral_dt);
+    
+    static downsample_counter = 0;
+    downsample_counter++;
+    if (downsample_counter >= _gyro_downsample_ratio){//time to report gyro readings
+        downsample_counter = 0;
+        
+    }
+    
+    
+	bool gyro_int_notify = _gyro_int.put(grb.timestamp, gval, gval_integrated, grb.integral_dt);
 	grb.x_integral = gval_integrated(0);
 	grb.y_integral = gval_integrated(1);
 	grb.z_integral = gval_integrated(2);
@@ -2022,11 +2038,11 @@ MPU6000::measure()
 	_gyro_reports->force(&grb);
 
 	/* notify anyone waiting for data */
-	if (gyro_notify) {
+	if (gyro_int_notify) {
 		_gyro->parent_poll_notify();
 	}
 
-	if (gyro_notify && !(_pub_blocked)) {
+	if (gyro_int_notify && !(_pub_blocked)) {
 		/* publish it */
 		orb_publish(ORB_ID(sensor_gyro), _gyro->_gyro_topic, &grb);
 	}
