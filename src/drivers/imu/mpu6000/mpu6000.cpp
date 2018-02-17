@@ -106,7 +106,7 @@
   is 583 us
 
  */
-#define MPU6000_TIMER_REDUCTION				200
+#define MPU6000_TIMER_REDUCTION_RATIO 0.8
 
 enum MPU_DEVICE_TYPE {
 	MPU_DEVICE_TYPE_MPU6000	= 6000,
@@ -1452,7 +1452,7 @@ MPU6000::ioctl(struct file *filp, int cmd, unsigned long arg)
 					 */
 
 					if (!is_i2c()) {
-						_call.period = _call_interval - MPU6000_TIMER_REDUCTION;
+						_call.period = _call_interval * MPU6000_TIMER_REDUCTION_RATIO;
 					}
 
 					/* if we need to start the poll state machine, do it */
@@ -1714,7 +1714,7 @@ MPU6000::start()
 		/* start polling at the specified rate */
 		hrt_call_every(&_call,
 			       1000,
-			       _call_interval - MPU6000_TIMER_REDUCTION,
+			       _call_interval * MPU6000_TIMER_REDUCTION_RATIO,
 			       (hrt_callout)&MPU6000::measure_trampoline, this);
 
 	} else {
@@ -1779,7 +1779,7 @@ MPU6000::cycle()
 			   &_work,
 			   (worker_t)&MPU6000::cycle_trampoline,
 			   this,
-			   USEC2TICK(_call_interval - MPU6000_TIMER_REDUCTION));
+			   USEC2TICK(_call_interval * MPU6000_TIMER_REDUCTION_RATIO));
 	}
 }
 #endif
