@@ -1866,8 +1866,8 @@ MPU6000::measure()
 {
     /*
      1: Check if conditions a right for us to be running this function
-     2: Check status register to see if new gyro data is available. If not, return.
-     3: Receive sensor data and feed to gyro LPF and gyro integrator.
+     2: Receive sensor data and check status register to see if new gyro data is available. If not, return.
+     3: Feed sensor data to gyro LPF and gyro integrator.
      4: If data has been downsampled to 1kHz then send out gyro rate data.
      5: If gyro integrator has completed an integration cycle then send out delta angle data.
      6: Check if accelerometer data is new data or a duplicate. If it is duplicate then there is no need to process the data, return.
@@ -1901,7 +1901,6 @@ MPU6000::measure()
 		int16_t		gyro_z;
 	} report;
 
-    //Step 3
     /*
 	 * Fetch the full set of measurements from the MPU6000 in one pass.
 	 */
@@ -1913,9 +1912,18 @@ MPU6000::measure()
 			sizeof(mpu_report))) {
 		return -EIO;
 	}
+    
+    //Check to see if there is any new data since the last read.
+    if (!(mpu_report.status & BIT_INT_STATUS_DATA)){
+        perf_count(_duplicates);
+        perf_end(_sample_perf);
+        return OK;
+    }
 
 	check_registers();
 
+    //Step 3
+    
 	/*
 	 * Convert from big to little endian
 	 */
