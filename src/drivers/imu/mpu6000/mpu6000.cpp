@@ -2035,7 +2035,7 @@ MPU6000::measure()
 	math::Vector<3> gval_integrated;
     
     //Step 4
-    static downsample_counter = 0;
+    static uint8_t downsample_counter = 0;
     downsample_counter++;
     if (downsample_counter >= _gyro_downsample_ratio){//time to report gyro readings
         downsample_counter = 0;
