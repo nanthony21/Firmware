@@ -53,6 +53,10 @@
 
 #include <uORB/topics/sensor_gyro.h>
 #define gyro_report sensor_gyro_s
+#include <uORB/topics/sensor_delta_angle.h>
+#define delta_angle_report sensor_delta_angle_s
+#include <uORB/topics/sensor_gyro_fast.h>
+#define gyro_fast_report sensor_gyro_fast_s
 
 /** gyro scaling factors; Vout = (Vin * Vscale) + Voffset */
 struct gyro_calibration_s {

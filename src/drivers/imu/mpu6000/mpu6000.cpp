@@ -194,6 +194,7 @@ private:
 	int			_accel_class_instance;
 
 	ringbuffer::RingBuffer	*_gyro_reports;
+    ringbuffer::RingBuffer  *_delta_angle_reports;
 
 	struct gyro_calibration_s	_gyro_scale;
 	float			_gyro_range_scale;
@@ -466,6 +467,7 @@ protected:
 private:
 	MPU6000			*_parent;
 	orb_advert_t		_gyro_topic;
+    orb_advert_t        _delta_angle_topic;
 	int			_gyro_orb_class_instance;
 	int			_gyro_class_instance;
 
@@ -501,6 +503,7 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	_accel_orb_class_instance(-1),
 	_accel_class_instance(-1),
 	_gyro_reports(nullptr),
+    _delta_angle_reports(nullptr),
 	_gyro_scale{},
 	_gyro_range_scale(0.0f),
 	_gyro_range_rad_s(0.0f),
@@ -610,6 +613,10 @@ MPU6000::~MPU6000()
 	if (_gyro_reports != nullptr) {
 		delete _gyro_reports;
 	}
+    
+    if (_delta_angle_reports != nullptr) {
+        delete _delta_angle_reports;
+    }
 
 	if (_accel_class_instance != -1) {
 		unregister_class_devname(ACCEL_BASE_DEVICE_PATH, _accel_class_instance);
@@ -666,7 +673,7 @@ MPU6000::init()
 		return ret;
 	}
 
-	_gyro_reports = new ringbuffer::RingBuffer(2, sizeof(gyro_report));
+	_gyro_reports = new ringbuffer::RingBuffer(2, sizeof(gyro_fast_report));
 
 	if (_gyro_reports == nullptr) {
 		return ret;
@@ -748,15 +755,25 @@ MPU6000::init()
 	}
 
 	/* advertise sensor topic, measure manually to initialize valid report */
-	struct gyro_report grp;
+	struct gyro_fast_report grp;
 	_gyro_reports->get(&grp);
 
-	_gyro->_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro), &grp,
+	_gyro->_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro_fast), &grp,
 			     &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
 
 	if (_gyro->_gyro_topic == nullptr) {
 		PX4_WARN("ADVERT FAIL");
 	}
+    
+    struct delta_angle_report darp;
+    _delta_angle_reports->get(&darp);
+    
+    _gyro->_delta_angle_topic = orb_advertise_multi(ORB_ID(sensor_delta_angle), &darp,
+                                             &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
+    
+    if (_gyro->_delta_angle_topic == nullptr) {
+        PX4_WARN("ADVERT FAIL");
+    }
 
 	return ret;
 }
@@ -1361,7 +1378,7 @@ MPU6000::gyro_read(struct file *filp, char *buffer, size_t buflen)
 	perf_count(_gyro_reads);
 
 	/* copy reports out of our buffer to the caller */
-	gyro_report *grp = reinterpret_cast<gyro_report *>(buffer);
+	gyro_fast_report *grp = reinterpret_cast<gyro_fast_report *>(buffer);
 	int transferred = 0;
 
 	while (count--) {
@@ -1374,7 +1391,7 @@ MPU6000::gyro_read(struct file *filp, char *buffer, size_t buflen)
 	}
 
 	/* return the number of bytes transferred */
-	return (transferred * sizeof(gyro_report));
+	return (transferred * sizeof(gyro_fast_report));
 }
 
 int
@@ -1565,6 +1582,11 @@ MPU6000::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 				px4_leave_critical_section(flags);
 				return -ENOMEM;
 			}
+        
+            if (!_delta_angle_reports->resize(arg)) {
+                px4_leave_critical_section(flags);
+                return -ENOMEM;
+            }
 
 			px4_leave_critical_section(flags);
 
@@ -1717,6 +1739,7 @@ MPU6000::start()
 	/* discard any stale data in the buffers */
 	_accel_reports->flush();
 	_gyro_reports->flush();
+    _delta_angle_reports->flush();
 
 	if (!is_i2c()) {
 		/* start polling at the specified rate */
@@ -1758,6 +1781,10 @@ MPU6000::stop()
 	if (_gyro_reports != nullptr) {
 		_gyro_reports->flush();
 	}
+    
+    if (_delta_angle_reports != nullptr) {
+        _delta_angle_reports->flush();
+    }
 }
 
 #if defined(USE_I2C)
@@ -1980,19 +2007,26 @@ MPU6000::measure()
 	/*
 	 * Report buffers.
 	 */
-	accel_report	arb;
-	gyro_report		grb;
-
+	accel_report	    arb;
+	gyro_fast_report	grb;
+    delta_angle_report  darb;
+    
 	/*
 	 * Adjust and scale results to m/s^2.
 	 */
-	grb.timestamp = arb.timestamp = hrt_absolute_time();
+	grb.timestamp = arb.timestamp = darb.timestamp = hrt_absolute_time();
 
 	// report the error count as the sum of the number of bad
 	// transfers and bad register reads. This allows the higher
 	// level code to decide if it should use this sensor based on
 	// whether it has had failures
-	grb.error_count = arb.error_count = perf_event_count(_bad_transfers) + perf_event_count(_bad_registers);
+	grb.error_count = arb.error_count = darb.error_count = perf_event_count(_bad_transfers) + perf_event_count(_bad_registers);
+    
+    grb.temperature_raw = report.temp;
+    grb.temperature = _last_temperature;
+    
+    /* return device ID */
+    grb.device_id = darb.device_id = _gyro->_device_id.devid;
 
 	/*
 	 * 1) Scale raw value to SI units using scaling from datasheet.
@@ -2039,34 +2073,28 @@ MPU6000::measure()
     downsample_counter++;
     if (downsample_counter >= _gyro_downsample_ratio){//time to report gyro readings
         downsample_counter = 0;
-        
+        orb_publish(ORB_ID(sensor_gyro_fast), _gyro->_gyro_topic, &grb);
     }
     
     //Step 5
-	bool gyro_int_notify = _gyro_int.put(grb.timestamp, gval, gval_integrated, grb.integral_dt);
-	grb.x_integral = gval_integrated(0);
-	grb.y_integral = gval_integrated(1);
-	grb.z_integral = gval_integrated(2);
+	bool gyro_int_notify = _gyro_int.put(darb.timestamp, gval, gval_integrated, darb.integral_dt);
+	darb.x_integral = gval_integrated(0);
+	darb.y_integral = gval_integrated(1);
+	darb.z_integral = gval_integrated(2);
 
-	grb.scaling = _gyro_range_scale;
-	grb.range_rad_s = _gyro_range_rad_s;
 
-	grb.temperature_raw = report.temp;
-	grb.temperature = _last_temperature;
-
-	/* return device ID */
-	grb.device_id = _gyro->_device_id.devid;
 
 	_gyro_reports->force(&grb);
 
 	/* notify anyone waiting for data */
 	if (gyro_int_notify) {
+        _delta_angle_reports->force(&darb);
 		_gyro->parent_poll_notify();
 	}
 
 	if (gyro_int_notify && !(_pub_blocked)) {
 		/* publish it */
-		orb_publish(ORB_ID(sensor_gyro), _gyro->_gyro_topic, &grb);
+		orb_publish(ORB_ID(sensor_delta_angle), _gyro->_delta_angle_topic, &darb);
 	}
 
     /* Step 6:
@@ -2180,6 +2208,7 @@ MPU6000::print_info()
 	perf_print_counter(_duplicates);
 	_accel_reports->print_info("accel queue");
 	_gyro_reports->print_info("gyro queue");
+    _delta_angle_reports->print_info("delta angle queue");
 	::printf("checked_next: %u\n", _checked_next);
 
 	for (uint8_t i = 0; i < MPU6000_NUM_CHECKED_REGISTERS; i++) {
@@ -2222,6 +2251,7 @@ MPU6000_gyro::MPU6000_gyro(MPU6000 *parent, const char *path) :
 	CDev("MPU6000_gyro", path),
 	_parent(parent),
 	_gyro_topic(nullptr),
+    _delta_angle_topic(nullptr),
 	_gyro_orb_class_instance(-1),
 	_gyro_class_instance(-1)
 {
