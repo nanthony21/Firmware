@@ -39,15 +39,45 @@
 
 #pragma once
 
-#if defined(PX4_I2C_MPU6050_ADDR) || \
-	defined(PX4_I2C_MPU6000_ADDR) || \
-	defined(PX4_I2C_ICM_20608_G_ADDR)
-#  define USE_I2C
-#endif
+#include <px4_config.h>
 
+#include <sys/types.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <semaphore.h>
+#include <string.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <errno.h>
+#include <stdio.h>
+#include <math.h>
+#include <unistd.h>
+#include <getopt.h>
 
-#define DIR_READ			0x80
-#define DIR_WRITE			0x00
+#include <systemlib/perf_counter.h>
+#include <systemlib/err.h>
+#include <systemlib/conversions.h>
+#include <systemlib/px4_macros.h>
+
+#include <nuttx/arch.h>
+#include <nuttx/wqueue.h>
+#include <nuttx/clock.h>
+
+#include <board_config.h>
+#include <drivers/drv_hrt.h>
+
+#include <drivers/device/spi.h>
+#include <drivers/device/i2c.h>
+#include <drivers/device/ringbuffer.h>
+#include <drivers/device/integrator.h>
+#include <drivers/drv_accel.h>
+#include <drivers/drv_gyro.h>
+#include <mathlib/math/filter/LowPassFilter2p.hpp>
+#include <lib/conversion/rotation.h>
+
+#include "mpu6000_registers.h"
 
 #define MPU_DEVICE_PATH_ACCEL		"/dev/mpu6000_accel"
 #define MPU_DEVICE_PATH_GYRO		"/dev/mpu6000_gyro"
@@ -79,149 +109,7 @@
 #define ICM20689_DEVICE_PATH_ACCEL		"/dev/icm20689_accel"
 #define ICM20689_DEVICE_PATH_GYRO		"/dev/icm20689_gyro"
 
-// MPU 6000 registers
-#define MPUREG_WHOAMI			0x75
-#define MPUREG_SMPLRT_DIV		0x19
-#define MPUREG_CONFIG			0x1A
-#define MPUREG_GYRO_CONFIG		0x1B
-#define MPUREG_ACCEL_CONFIG		0x1C
-#define MPUREG_FIFO_EN			0x23
-#define MPUREG_INT_PIN_CFG		0x37
-#define MPUREG_INT_ENABLE		0x38
-#define MPUREG_INT_STATUS		0x3A
-#define MPUREG_ACCEL_XOUT_H		0x3B
-#define MPUREG_ACCEL_XOUT_L		0x3C
-#define MPUREG_ACCEL_YOUT_H		0x3D
-#define MPUREG_ACCEL_YOUT_L		0x3E
-#define MPUREG_ACCEL_ZOUT_H		0x3F
-#define MPUREG_ACCEL_ZOUT_L		0x40
-#define MPUREG_TEMP_OUT_H		0x41
-#define MPUREG_TEMP_OUT_L		0x42
-#define MPUREG_GYRO_XOUT_H		0x43
-#define MPUREG_GYRO_XOUT_L		0x44
-#define MPUREG_GYRO_YOUT_H		0x45
-#define MPUREG_GYRO_YOUT_L		0x46
-#define MPUREG_GYRO_ZOUT_H		0x47
-#define MPUREG_GYRO_ZOUT_L		0x48
-#define MPUREG_USER_CTRL		0x6A
-#define MPUREG_PWR_MGMT_1		0x6B
-#define MPUREG_PWR_MGMT_2		0x6C
-#define MPUREG_FIFO_COUNTH		0x72
-#define MPUREG_FIFO_COUNTL		0x73
-#define MPUREG_FIFO_R_W			0x74
-#define MPUREG_PRODUCT_ID		0x0C
-#define MPUREG_TRIM1			0x0D
-#define MPUREG_TRIM2			0x0E
-#define MPUREG_TRIM3			0x0F
-#define MPUREG_TRIM4			0x10
-#define MPU_GYRO_DLPF_CFG_256HZ_NOLPF2	0x00
-#define MPU_GYRO_DLPF_CFG_188HZ		0x01
-#define MPU_GYRO_DLPF_CFG_98HZ		0x02
-#define MPU_GYRO_DLPF_CFG_42HZ		0x03
-#define MPU_GYRO_DLPF_CFG_20HZ		0x04
-#define MPU_GYRO_DLPF_CFG_10HZ		0x05
-#define MPU_GYRO_DLPF_CFG_5HZ		0x06
-#define MPU_GYRO_DLPF_CFG_2100HZ_NOLPF	0x07
-#define MPU_DLPF_CFG_MASK		0x07
 
-// Configuration bits MPU 3000 and MPU 6000 (not revised)?
-#define BIT_SLEEP				0x40
-#define BIT_H_RESET				0x80
-#define BITS_CLKSEL				0x07
-#define MPU_CLK_SEL_PLLGYROX	0x01
-#define MPU_CLK_SEL_PLLGYROZ	0x03
-#define MPU_EXT_SYNC_GYROX		0x02
-#define BITS_GYRO_ST_X			0x80
-#define BITS_GYRO_ST_Y			0x40
-#define BITS_GYRO_ST_Z			0x20
-#define BITS_FS_250DPS			0x00
-#define BITS_FS_500DPS			0x08
-#define BITS_FS_1000DPS			0x10
-#define BITS_FS_2000DPS			0x18
-#define BITS_FS_MASK			0x18
-#define BIT_INT_ANYRD_2CLEAR	0x10
-#define BIT_RAW_RDY_EN			0x01
-#define BIT_I2C_IF_DIS			0x10
-#define BIT_INT_STATUS_DATA		0x01
-
-#define MPU_WHOAMI_6000			0x68
-#define ICM_WHOAMI_20602		0x12
-#define ICM_WHOAMI_20608		0xaf
-#define ICM_WHOAMI_20689		0x98
-
-// ICM2608 specific registers
-
-#define ICMREG_ACCEL_CONFIG2		0x1D
-#define ICM_ACC_DLPF_CFG_1046HZ_NOLPF	0x00
-#define ICM_ACC_DLPF_CFG_218HZ		0x01
-#define ICM_ACC_DLPF_CFG_99HZ		0x02
-#define ICM_ACC_DLPF_CFG_44HZ		0x03
-#define ICM_ACC_DLPF_CFG_21HZ		0x04
-#define ICM_ACC_DLPF_CFG_10HZ		0x05
-#define ICM_ACC_DLPF_CFG_5HZ		0x06
-#define ICM_ACC_DLPF_CFG_420HZ		0x07
-/* this is an undocumented register which
-   if set incorrectly results in getting a 2.7m/s/s offset
-   on the Y axis of the accelerometer
-*/
-#define MPUREG_ICM_UNDOC1		0x11
-#define MPUREG_ICM_UNDOC1_VALUE	0xc9
-
-// Product ID Description for ICM20602
-// Read From device
-
-#define ICM20602_REV_01		1
-#define ICM20602_REV_02		2
-
-// Product ID Description for ICM20608
-
-#define ICM20608_REV_FF		0xff // In the past, was thought to be not returning a value. But seem repeatable.
-
-// Product ID Description for ICM20689
-
-#define ICM20689_REV_FE		0xfe
-#define ICM20689_REV_03		0x03
-
-// Product ID Description for MPU6000
-// high 4 bits 	low 4 bits
-// Product Name	Product Revision
-#define MPU6000ES_REV_C4		0x14
-#define MPU6000ES_REV_C5		0x15
-#define MPU6000ES_REV_D6		0x16
-#define MPU6000ES_REV_D7		0x17
-#define MPU6000ES_REV_D8		0x18
-#define MPU6000_REV_C4			0x54
-#define MPU6000_REV_C5			0x55
-#define MPU6000_REV_D6			0x56
-#define MPU6000_REV_D7			0x57
-#define MPU6000_REV_D8			0x58
-#define MPU6000_REV_D9			0x59
-#define MPU6000_REV_D10			0x5A
-#define MPU6050_REV_D8			0x28	// TODO:Need verification
-
-#define MPU6000_ACCEL_DEFAULT_RANGE_G				16
-#define MPU6000_ACCEL_DEFAULT_RATE					1000
-#define MPU6000_ACCEL_MAX_OUTPUT_RATE				280
-#define MPU6000_ACCEL_DEFAULT_DRIVER_FILTER_FREQ	30
-
-#define MPU6000_GYRO_DEFAULT_RANGE_G				8
-#define MPU6000_GYRO_DEFAULT_RATE					8000
-/* rates need to be the same between accel and gyro */
-#define MPU6000_DELTA_ANGLE_MAX_OUTPUT_RATE         280
-#define MPU6000_GYRO_DEFAULT_DRIVER_FILTER_FREQ		30
-
-#define MPU6000_DEFAULT_ONCHIP_FILTER_FREQ			0
-#define ICM_DEFAULT_ACCEL_ONCHIP_FILTER_FREQ        42
-
-#define MPU6000_ONE_G					9.80665f
-
-#ifdef PX4_SPI_BUS_EXT
-#define EXTERNAL_BUS PX4_SPI_BUS_EXT
-#else
-#define EXTERNAL_BUS 0
-#endif
-
-#define MPUIOCGIS_I2C	(unsigned)(DEVIOCGDEVICEID+100)
 
 #pragma pack(push, 1)
 /**
@@ -241,22 +129,7 @@ struct MPUReport {
 };
 #pragma pack(pop)
 
-#define MPU_MAX_READ_BUFFER_SIZE (sizeof(MPUReport) + 1)
-#define MPU_MAX_WRITE_BUFFER_SIZE (2)
-/*
-  The MPU6000 can only handle high bus speeds on the sensor and
-  interrupt status registers. All other registers have a maximum 1MHz
-  Communication with all registers of the device is performed using either
-  I2C at 400kHz or SPI at 1MHz. For applications requiring faster communications,
-  the sensor and interrupt registers may be read using SPI at 20MHz
- */
-#define MPU6000_LOW_BUS_SPEED				0
-#define MPU6000_HIGH_BUS_SPEED				0x8000
-#  define MPU6000_IS_HIGH_SPEED(r) 			((r) & MPU6000_HIGH_BUS_SPEED)
-#  define MPU6000_REG(r) 					((r) &~MPU6000_HIGH_BUS_SPEED)
-#  define MPU6000_SET_SPEED(r, s) 			((r)|(s))
-#  define MPU6000_HIGH_SPEED_OP(r) 			MPU6000_SET_SPEED((r), MPU6000_HIGH_BUS_SPEED)
-#  define MPU6000_LOW_SPEED_OP(r)			MPU6000_REG((r))
+
 
 /* interface factories */
 extern device::Device *MPU6000_SPI_interface(int bus, int device_type, bool external_bus);
@@ -264,3 +137,358 @@ extern device::Device *MPU6000_I2C_interface(int bus, int device_type, bool exte
 extern int MPU6000_probe(device::Device *dev, int device_type);
 
 typedef device::Device *(*MPU6000_constructor)(int, int, bool);
+
+enum MPU_DEVICE_TYPE {
+    MPU_DEVICE_TYPE_MPU6000    = 6000,
+    MPU_DEVICE_TYPE_ICM20602 = 20602,
+    MPU_DEVICE_TYPE_ICM20608 = 20608,
+    MPU_DEVICE_TYPE_ICM20689 = 20689
+};
+
+enum MPU6000_BUS {
+    MPU6000_BUS_ALL = 0,
+    MPU6000_BUS_I2C_INTERNAL,
+    MPU6000_BUS_I2C_EXTERNAL,
+    MPU6000_BUS_SPI_INTERNAL1,
+    MPU6000_BUS_SPI_INTERNAL2,
+    MPU6000_BUS_SPI_EXTERNAL1,
+    MPU6000_BUS_SPI_EXTERNAL2
+};
+
+class MPU6000_gyro;
+
+class MPU6000 : public device::CDev
+{
+public:
+    MPU6000(device::Device *interface, const char *path_accel, const char *path_gyro, enum Rotation rotation,
+            int device_type);
+    virtual ~MPU6000();
+    
+    virtual int        init();
+    
+    virtual ssize_t        read(struct file *filp, char *buffer, size_t buflen);
+    virtual int        ioctl(struct file *filp, int cmd, unsigned long arg);
+    
+    /**
+     * Diagnostics - print some basic information about the driver.
+     */
+    void            print_info();
+    
+    void            print_registers();
+    
+    /**
+     * Test behaviour against factory offsets
+     *
+     * @return 0 on success, 1 on failure
+     */
+    int             factory_self_test();
+    
+    // deliberately cause a sensor error
+    void             test_error();
+    
+protected:
+    Device            *_interface;
+    
+    virtual int        probe();
+    
+    friend class MPU6000_gyro;
+    
+    virtual ssize_t        gyro_read(struct file *filp, char *buffer, size_t buflen);
+    virtual int        gyro_ioctl(struct file *filp, int cmd, unsigned long arg);
+    
+private:
+    int             _device_type;
+    MPU6000_gyro        *_gyro;
+    uint8_t            _product;    /** product code */
+    
+#if defined(USE_I2C)
+    /*
+     * SPI bus based device use hrt
+     * I2C bus needs to use work queue
+     */
+    work_s            _work;
+#endif
+    bool             _use_hrt;
+    
+    struct hrt_call        _call;
+    unsigned        _call_interval;
+    uint8_t         _gyro_downsample_ratio;
+    
+    ringbuffer::RingBuffer    *_accel_reports;
+    
+    struct accel_calibration_s    _accel_scale;
+    float            _accel_range_scale;
+    float            _accel_range_m_s2;
+    orb_advert_t        _accel_topic;
+    int            _accel_orb_class_instance;
+    int            _accel_class_instance;
+    
+    ringbuffer::RingBuffer    *_gyro_reports;
+    ringbuffer::RingBuffer  *_delta_angle_reports;
+    
+    struct gyro_calibration_s    _gyro_scale;
+    float            _gyro_range_scale;
+    float            _gyro_range_rad_s;
+    
+    unsigned        _sample_rate;
+    unsigned int    _currentMaxSampleRate;
+    
+    perf_counter_t        _accel_reads;
+    perf_counter_t        _gyro_reads;
+    perf_counter_t        _sample_perf;
+    perf_counter_t        _bad_transfers;
+    perf_counter_t        _bad_registers;
+    perf_counter_t        _good_transfers;
+    perf_counter_t        _reset_retries;
+    perf_counter_t        _duplicates;
+    perf_counter_t        _controller_latency_perf;
+    
+    uint8_t            _register_wait;
+    uint64_t        _reset_wait;
+    
+    math::LowPassFilter2p    _accel_filter_x;
+    math::LowPassFilter2p    _accel_filter_y;
+    math::LowPassFilter2p    _accel_filter_z;
+    math::LowPassFilter2p    _gyro_filter_x;
+    math::LowPassFilter2p    _gyro_filter_y;
+    math::LowPassFilter2p    _gyro_filter_z;
+    
+    Integrator        _accel_int;
+    Integrator        _gyro_int;
+    
+    enum Rotation        _rotation;
+    
+    // this is used to support runtime checking of key
+    // configuration registers to detect SPI bus errors and sensor
+    // reset
+#define MPU6000_CHECKED_PRODUCT_ID_INDEX 0
+#define MPU6000_NUM_CHECKED_REGISTERS 10
+    static const uint8_t    _checked_registers[MPU6000_NUM_CHECKED_REGISTERS];
+    uint8_t            _checked_values[MPU6000_NUM_CHECKED_REGISTERS];
+    uint8_t            _checked_next;
+    
+    // use this to avoid processing measurements when in factory
+    // self test
+    volatile bool        _in_factory_test;
+    
+    // last temperature reading for print_info()
+    float            _last_temperature;
+    
+    // keep last accel reading for duplicate detection
+    uint16_t        _last_accel[3];
+    bool            _got_duplicate;
+    
+    /**
+     * Start automatic measurement.
+     */
+    void            start();
+    
+    /**
+     * Stop automatic measurement.
+     */
+    void            stop();
+    
+    /**
+     * Reset chip.
+     *
+     * Resets the chip and measurements ranges, but not scale and offset.
+     */
+    int            reset();
+    
+    /**
+     * is_icm_device
+     */
+    bool         is_icm_device() { return !is_mpu_device(); }
+    /**
+     * is_mpu_device
+     */
+    bool         is_mpu_device() { return _device_type == MPU_DEVICE_TYPE_MPU6000; }
+    
+    
+#if defined(USE_I2C)
+    /**
+     * When the I2C interfase is on
+     * Perform a poll cycle; collect from the previous measurement
+     * and start a new one.
+     *
+     * This is the heart of the measurement state machine.  This function
+     * alternately starts a measurement, or collects the data from the
+     * previous measurement.
+     *
+     * When the interval between measurements is greater than the minimum
+     * measurement interval, a gap is inserted between collection
+     * and measurement to provide the most recent measurement possible
+     * at the next interval.
+     */
+    void            cycle();
+    
+    /**
+     * Static trampoline from the workq context; because we don't have a
+     * generic workq wrapper yet.
+     *
+     * @param arg        Instance pointer for the driver that is polling.
+     */
+    static void        cycle_trampoline(void *arg);
+    
+    void use_i2c(bool on_true) { _use_hrt = !on_true; }
+    
+#endif
+    
+    bool is_i2c(void) { return !_use_hrt; }
+    
+    
+    /**
+     * Static trampoline from the hrt_call context; because we don't have a
+     * generic hrt wrapper yet.
+     *
+     * Called by the HRT in interrupt context at the specified rate if
+     * automatic polling is enabled.
+     *
+     * @param arg        Instance pointer for the driver that is polling.
+     */
+    static void        measure_trampoline(void *arg);
+    
+    /**
+     * Fetch measurements from the sensor and update the report buffers.
+     */
+    int            measure();
+    
+    /**
+     * Read a register from the MPU6000
+     *
+     * @param        The register to read.
+     * @return        The value that was read.
+     */
+    uint8_t            read_reg(unsigned reg, uint32_t speed = MPU6000_LOW_BUS_SPEED);
+    uint16_t        read_reg16(unsigned reg);
+    
+    
+    /**
+     * Write a register in the MPU6000
+     *
+     * @param reg        The register to write.
+     * @param value        The new value to write.
+     */
+    int                write_reg(unsigned reg, uint8_t value);
+    
+    /**
+     * Modify a register in the MPU6000
+     *
+     * Bits are cleared before bits are set.
+     *
+     * @param reg        The register to modify.
+     * @param clearbits    Bits in the register to clear.
+     * @param setbits    Bits in the register to set.
+     */
+    void            modify_reg(unsigned reg, uint8_t clearbits, uint8_t setbits);
+    
+    /**
+     * Write a register in the MPU6000, updating _checked_values
+     *
+     * @param reg        The register to write.
+     * @param value        The new value to write.
+     */
+    void            write_checked_reg(unsigned reg, uint8_t value);
+    
+    /**
+     * Set the MPU6000 measurement range.
+     *
+     * @param max_g        The maximum G value the range must support.
+     * @return        OK if the value can be supported, -ERANGE otherwise.
+     */
+    int                set_accel_range(unsigned max_g);
+    
+    /**
+     * Swap a 16-bit value read from the MPU6000 to native byte order.
+     */
+    uint16_t        swap16(uint16_t val) { return (val >> 8) | (val << 8);    }
+    
+    /**
+     * Get the internal / external state
+     *
+     * @return true if the sensor is not on the main MCU board
+     */
+    bool            is_external()
+    {
+        unsigned dummy;
+        return _interface->ioctl(ACCELIOCGEXTERNAL, dummy);
+    }
+    
+    /**
+     * Measurement self test
+     *
+     * @return 0 on success, 1 on failure
+     */
+    int             self_test();
+    
+    /**
+     * Accel self test
+     *
+     * @return 0 on success, 1 on failure
+     */
+    int                accel_self_test();
+    
+    /**
+     * Gyro self test
+     *
+     * @return 0 on success, 1 on failure
+     */
+    int                gyro_self_test();
+    
+    /*
+     set low pass filter frequency
+     */
+    void             _set_dlpf_filter(uint16_t frequency_hz);
+    void             _set_icm_acc_dlpf_filter(uint16_t frequency_hz);
+    
+    /*
+     set sample rate (approximate) - 8kHz to 5Hz
+     */
+    void            _set_sample_rate(unsigned desired_sample_rate_hz);
+    
+    /*
+     check that key registers still have the right value
+     */
+    void            check_registers(void);
+    
+    /* do not allow to copy this class due to pointer data members */
+    MPU6000(const MPU6000 &);
+    MPU6000 operator=(const MPU6000 &);
+    
+};
+
+
+
+
+
+/**
+ * Helper class implementing the gyro driver node.
+ */
+class MPU6000_gyro : public device::CDev
+{
+public:
+    MPU6000_gyro(MPU6000 *parent, const char *path);
+    ~MPU6000_gyro();
+    
+    virtual ssize_t        read(struct file *filp, char *buffer, size_t buflen);
+    virtual int        ioctl(struct file *filp, int cmd, unsigned long arg);
+    
+    virtual int        init();
+    
+protected:
+    friend class MPU6000;
+    
+    void            parent_poll_notify();
+    
+private:
+    MPU6000            *_parent;
+    orb_advert_t        _gyro_topic;
+    orb_advert_t        _delta_angle_topic;
+    int            _gyro_orb_class_instance;
+    int            _gyro_class_instance;
+    
+    /* do not allow to copy this class due to pointer data members */
+    MPU6000_gyro(const MPU6000_gyro &);
+    MPU6000_gyro operator=(const MPU6000_gyro &);
+};
+
