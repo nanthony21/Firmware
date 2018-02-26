@@ -860,8 +860,7 @@ MPU6000::factory_self_test()
 
 	for (uint8_t i = 0; i < repeats; i++) {
 		up_udelay(1000);
-		_interface->read(MPU6000_SET_SPEED(MPUREG_INT_STATUS, MPU6000_HIGH_BUS_SPEED), (uint8_t *)&mpu_report,
-				 sizeof(mpu_report));
+        getMeasurement(&mpu_report);
 
 		accel[0] += int16_t_from_bytes(mpu_report.accel_x);
 		accel[1] += int16_t_from_bytes(mpu_report.accel_y);
@@ -1531,27 +1530,14 @@ MPU6000::measure()
     
 	struct MPUReport mpu_report;
 
-	struct Report {
-		int16_t		accel_x;
-		int16_t		accel_y;
-		int16_t		accel_z;
-		int16_t		temp;
-		int16_t		gyro_x;
-		int16_t		gyro_y;
-		int16_t		gyro_z;
-	} report;
-
     /*
 	 * Fetch the full set of measurements from the MPU6000 in one pass.
 	 */
 
-	// sensor transfer at high clock speed
-
-	if (sizeof(mpu_report) != _interface->read(MPU6000_SET_SPEED(MPUREG_INT_STATUS, MPU6000_HIGH_BUS_SPEED),
-			(uint8_t *)&mpu_report,
-			sizeof(mpu_report))) {
-		return -EIO;
-	}
+    // sensor transfer at high clock speed
+    if (getMeasurement(&mpu_report) != OK){
+        return -EIO;
+    }
     
     //Check to see if there is any new data since the last read.
     if (!(mpu_report.status & BIT_INT_STATUS_DATA)){
@@ -1563,27 +1549,11 @@ MPU6000::measure()
 	check_registers();
 
     //Step 3
-    
-	/*
-	 * Convert from big to little endian
-	 */
-    report.accel_x = int16_t_from_bytes(mpu_report.accel_x);
-    report.accel_y = int16_t_from_bytes(mpu_report.accel_y);
-    report.accel_z = int16_t_from_bytes(mpu_report.accel_z);
-    
-    report.temp = int16_t_from_bytes(mpu_report.temp);
-    
-	report.gyro_x = int16_t_from_bytes(mpu_report.gyro_x);
-	report.gyro_y = int16_t_from_bytes(mpu_report.gyro_y);
-	report.gyro_z = int16_t_from_bytes(mpu_report.gyro_z);
 
-	if (report.accel_x == 0 &&
-	    report.accel_y == 0 &&
-	    report.accel_z == 0 &&
-	    report.temp == 0 &&
-	    report.gyro_x == 0 &&
-	    report.gyro_y == 0 &&
-	    report.gyro_z == 0) {
+	if (mpu_report.accel_z[0] == 0 &&
+        mpu_report.accel_z[1] == 0 &&
+        mpu_report.temp[0] == 0 &&
+	    mpu_report.temp[1] == 0 ) {
 		// all zero data - probably a SPI bus error
 		perf_count(_bad_transfers);
 		perf_end(_sample_perf);
@@ -1604,81 +1574,24 @@ MPU6000::measure()
 		return OK;
 	}
 
-
-	/*
-	 * Swap axes and negate y
-	 */
-	int16_t gyro_xt = report.gyro_y;
-	int16_t gyro_yt = ((report.gyro_x == -32768) ? 32767 : -report.gyro_x);
-
-	/*
-	 * Apply the swap
-	 */
-	report.gyro_x = gyro_xt;
-	report.gyro_y = gyro_yt;
-
-	/*
-	 * Report buffers.
-	 */
-	accel_report	    arb;
-	gyro_fast_report	grb;
+    /*
+     * Report buffers.
+     */
+    accel_report        arb;
+    gyro_fast_report    grb;
     delta_angle_report  darb;
     
-	/*
-	 * Adjust and scale results to m/s^2.
-	 */
-	grb.timestamp = arb.timestamp = darb.timestamp = hrt_absolute_time();
-
-	// report the error count as the sum of the number of bad
-	// transfers and bad register reads. This allows the higher
-	// level code to decide if it should use this sensor based on
-	// whether it has had failures
-	grb.error_count = arb.error_count = darb.error_count = perf_event_count(_bad_transfers) + perf_event_count(_bad_registers);
-    
-    grb.temperature_raw = report.temp;
-    grb.temperature = _last_temperature;
-    
+    grb.timestamp = arb.timestamp = darb.timestamp = hrt_absolute_time();
     /* return device ID */
-    grb.device_id = darb.device_id = _gyro->_device_id.devid;
+    grb.device_id = darb.device_id = arb.device_id = _gyro->_device_id.devid;
+    
+    // report the error count as the sum of the number of bad
+    // transfers and bad register reads. This allows the higher
+    // level code to decide if it should use this sensor based on
+    // whether it has had failures
+    grb.error_count = arb.error_count = darb.error_count = perf_event_count(_bad_transfers) + perf_event_count(_bad_registers);
 
-	/*
-	 * 1) Scale raw value to SI units using scaling from datasheet.
-	 * 2) Subtract static offset (in SI units)
-	 * 3) Scale the statically calibrated values with a linear
-	 *    dynamically obtained factor
-	 *
-	 * Note: the static sensor offset is the number the sensor outputs
-	 * 	 at a nominally 'zero' input. Therefore the offset has to
-	 * 	 be subtracted.
-	 *
-	 *	 Example: A gyro outputs a value of 74 at zero angular rate
-	 *	 	  the offset is 74 from the origin and subtracting
-	 *		  74 from all measurements centers them around zero.
-	 */
-
-
-	/* NOTE: Axes have been swapped to match the board a few lines above. */
-
-	grb.x_raw = report.gyro_x;
-	grb.y_raw = report.gyro_y;
-	grb.z_raw = report.gyro_z;
-
-	float xraw_f = report.gyro_x;
-	float yraw_f = report.gyro_y;
-	float zraw_f = report.gyro_z;
-
-	// apply user specified rotation
-	rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
-
-	float x_gyro_in_new = ((xraw_f * _gyro_range_scale) - _gyro_scale.x_offset) * _gyro_scale.x_scale;
-	float y_gyro_in_new = ((yraw_f * _gyro_range_scale) - _gyro_scale.y_offset) * _gyro_scale.y_scale;
-	float z_gyro_in_new = ((zraw_f * _gyro_range_scale) - _gyro_scale.z_offset) * _gyro_scale.z_scale;
-
-	grb.x = _gyro_filter_x.apply(x_gyro_in_new);
-	grb.y = _gyro_filter_y.apply(y_gyro_in_new);
-	grb.z = _gyro_filter_z.apply(z_gyro_in_new);
-
-	math::Vector<3> gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
+    math::Vector<3> gval = processGyro(&mpu_report,&grb);
 	math::Vector<3> gval_integrated;
     
     //Step 4
@@ -1725,45 +1638,8 @@ MPU6000::measure()
     else{
         memcpy(&_last_accel[0], &mpu_report.accel_x[0], 6);
         
-        /*
-         * Swap axes and negate y
-         */
-        int16_t accel_xt = report.accel_y;
-        int16_t accel_yt = ((report.accel_x == -32768) ? 32767 : -report.accel_x);
+        math::Vector<3> aval = processAccel(&mpu_report, &arb);
         
-        /*
-         * Apply the swap
-         */
-        report.accel_x = accel_xt;
-        report.accel_y = accel_yt;
-        
-        /*
-         * 1) Scale raw value to SI units using scaling from datasheet.
-         * 2) Subtract static offset (in SI units)
-         * 3) Scale the statically calibrated values with a linear
-         *    dynamically obtained factor
-         */
-        
-        arb.x_raw = report.accel_x;
-        arb.y_raw = report.accel_y;
-        arb.z_raw = report.accel_z;
-        
-        xraw_f = report.accel_x;
-        yraw_f = report.accel_y;
-        zraw_f = report.accel_z;
-        
-        // apply user specified rotation
-        rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
-        
-        float x_in_new = ((xraw_f * _accel_range_scale) - _accel_scale.x_offset) * _accel_scale.x_scale;
-        float y_in_new = ((yraw_f * _accel_range_scale) - _accel_scale.y_offset) * _accel_scale.y_scale;
-        float z_in_new = ((zraw_f * _accel_range_scale) - _accel_scale.z_offset) * _accel_scale.z_scale;
-        
-        arb.x = _accel_filter_x.apply(x_in_new);
-        arb.y = _accel_filter_y.apply(y_in_new);
-        arb.z = _accel_filter_z.apply(z_in_new);
-        
-        math::Vector<3> aval(x_in_new, y_in_new, z_in_new);
         math::Vector<3> aval_integrated;
         
         //Step 8
@@ -1775,18 +1651,6 @@ MPU6000::measure()
         arb.scaling = _accel_range_scale;
         arb.range_m_s2 = _accel_range_m_s2;
         
-        if (is_icm_device()) { // if it is an ICM20608
-            _last_temperature = (report.temp) / 326.8f + 25.0f;
-            
-        } else { // If it is an MPU6000
-            _last_temperature = (report.temp) / 361.0f + 35.0f;
-        }
-        
-        arb.temperature_raw = report.temp;
-        arb.temperature = _last_temperature;
-        
-        /* return device ID */
-        arb.device_id = _device_id.devid;
         
         _accel_reports->force(&arb);
         
@@ -1806,6 +1670,151 @@ MPU6000::measure()
     /* stop measuring */
     perf_end(_sample_perf);
     return OK;
+}
+
+int MPU6000::getMeasurement(MPUReport* mpu_report){
+    if (sizeof(mpu_report) != _interface->read(MPU6000_SET_SPEED(MPUREG_INT_STATUS, MPU6000_HIGH_BUS_SPEED),
+                                               (uint8_t *)&mpu_report,
+                                               sizeof(mpu_report))) {
+        return -EIO;
+    }
+    return OK;
+}
+
+math::Vector<3> MPU6000::processGyro(MPUReport* mpu_report, gyro_fast_report* grb){
+    struct Report {
+        int16_t        temp;
+        int16_t        gyro_x;
+        int16_t        gyro_y;
+        int16_t        gyro_z;
+    } report;
+    
+    //Convert from big to little endian
+    report.temp = int16_t_from_bytes(mpu_report->temp);
+    report.gyro_x = int16_t_from_bytes(mpu_report->gyro_x);
+    report.gyro_y = int16_t_from_bytes(mpu_report->gyro_y);
+    report.gyro_z = int16_t_from_bytes(mpu_report->gyro_z);
+    
+    //Swap axes and negate y
+    int16_t gyro_xt = report.gyro_y;
+    int16_t gyro_yt = ((report.gyro_x == -32768) ? 32767 : -report.gyro_x);
+    
+    //Apply the swap
+    report.gyro_x = gyro_xt;
+    report.gyro_y = gyro_yt;
+    
+    //Adjust and scale results to m/s^2.
+    
+    grb->temperature_raw = report.temp;
+    grb->temperature = _last_temperature;
+    
+    /*
+     * 1) Scale raw value to SI units using scaling from datasheet.
+     * 2) Subtract static offset (in SI units)
+     * 3) Scale the statically calibrated values with a linear
+     *    dynamically obtained factor
+     *
+     * Note: the static sensor offset is the number the sensor outputs
+     *      at a nominally 'zero' input. Therefore the offset has to
+     *      be subtracted.
+     *
+     *     Example: A gyro outputs a value of 74 at zero angular rate
+     *           the offset is 74 from the origin and subtracting
+     *          74 from all measurements centers them around zero.
+     */
+    
+    
+    /* NOTE: Axes have been swapped to match the board a few lines above. */
+    
+    grb->x_raw = report.gyro_x;
+    grb->y_raw = report.gyro_y;
+    grb->z_raw = report.gyro_z;
+    
+    float xraw_f = report.gyro_x;
+    float yraw_f = report.gyro_y;
+    float zraw_f = report.gyro_z;
+    
+    // apply user specified rotation
+    rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
+    
+    float x_gyro_in_new = ((xraw_f * _gyro_range_scale) - _gyro_scale.x_offset) * _gyro_scale.x_scale;
+    float y_gyro_in_new = ((yraw_f * _gyro_range_scale) - _gyro_scale.y_offset) * _gyro_scale.y_scale;
+    float z_gyro_in_new = ((zraw_f * _gyro_range_scale) - _gyro_scale.z_offset) * _gyro_scale.z_scale;
+    
+    grb->x = _gyro_filter_x.apply(x_gyro_in_new);
+    grb->y = _gyro_filter_y.apply(y_gyro_in_new);
+    grb->z = _gyro_filter_z.apply(z_gyro_in_new);
+    
+    math::Vector<3> gval(x_gyro_in_new, y_gyro_in_new, z_gyro_in_new);
+    return gval;
+}
+
+math::Vector<3> MPU6000::processAccel(MPUReport* mpu_report, accel_report* arb){
+    struct Report {
+        int16_t        accel_x;
+        int16_t        accel_y;
+        int16_t        accel_z;
+        int16_t        temp;
+    } report;
+    /*
+     * Convert from big to little endian
+     */
+    report.accel_x = int16_t_from_bytes(mpu_report->accel_x);
+    report.accel_y = int16_t_from_bytes(mpu_report->accel_y);
+    report.accel_z = int16_t_from_bytes(mpu_report->accel_z);
+    
+    report.temp = int16_t_from_bytes(mpu_report->temp);
+    
+    if (is_icm_device()) { // if it is an ICM20608
+        _last_temperature = (report.temp) / 326.8f + 25.0f;
+        
+    } else { // If it is an MPU6000
+        _last_temperature = (report.temp) / 361.0f + 35.0f;
+    }
+    
+    arb->temperature_raw = report.temp;
+    arb->temperature = _last_temperature;
+    
+    /*
+     * Swap axes and negate y
+     */
+    int16_t accel_xt = report.accel_y;
+    int16_t accel_yt = ((report.accel_x == -32768) ? 32767 : -report.accel_x);
+    
+    /*
+     * Apply the swap
+     */
+    report.accel_x = accel_xt;
+    report.accel_y = accel_yt;
+    
+    /*
+     * 1) Scale raw value to SI units using scaling from datasheet.
+     * 2) Subtract static offset (in SI units)
+     * 3) Scale the statically calibrated values with a linear
+     *    dynamically obtained factor
+     */
+    
+    arb->x_raw = report.accel_x;
+    arb->y_raw = report.accel_y;
+    arb->z_raw = report.accel_z;
+    
+    float xraw_f = report.accel_x;
+    float yraw_f = report.accel_y;
+    float zraw_f = report.accel_z;
+    
+    // apply user specified rotation
+    rotate_3f(_rotation, xraw_f, yraw_f, zraw_f);
+    
+    float x_in_new = ((xraw_f * _accel_range_scale) - _accel_scale.x_offset) * _accel_scale.x_scale;
+    float y_in_new = ((yraw_f * _accel_range_scale) - _accel_scale.y_offset) * _accel_scale.y_scale;
+    float z_in_new = ((zraw_f * _accel_range_scale) - _accel_scale.z_offset) * _accel_scale.z_scale;
+    
+    arb->x = _accel_filter_x.apply(x_in_new);
+    arb->y = _accel_filter_y.apply(y_in_new);
+    arb->z = _accel_filter_z.apply(z_in_new);
+    
+    math::Vector<3> aval(x_in_new, y_in_new, z_in_new);
+    return aval;
 }
 
 void

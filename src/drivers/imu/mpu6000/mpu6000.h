@@ -353,6 +353,9 @@ private:
      */
     int            measure();
     
+    int getMeasurement(MPUReport* mpu_report);
+    math::Vector<3> processGyro(MPUReport* mpu_report, gyro_fast_report* grb);
+    math::Vector<3> processAccel(MPUReport* mpu_report, accel_report* arb);
     /**
      * Read a register from the MPU6000
      *
