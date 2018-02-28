@@ -1546,8 +1546,6 @@ MPU6000::measure()
         return OK;
     }
 
-	check_registers();
-
     //Step 3
 
 	if (mpu_report.accel_z[0] == 0 &&
@@ -1637,6 +1635,8 @@ MPU6000::measure()
     }
     else{
         memcpy(&_last_accel[0], &mpu_report.accel_x[0], 6);
+        
+        check_registers();
         
         math::Vector<3> aval = processAccel(&mpu_report, &arb);
         
