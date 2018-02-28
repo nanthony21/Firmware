@@ -97,7 +97,6 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	CDev("MPU6000", path_accel),
 	_interface(interface),
 	_device_type(device_type),
-	_gyro(new MPU6000_gyro(this, path_gyro)),
 	_product(0),
 #if defined(USE_I2C)
 	_work {},
@@ -113,7 +112,9 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	_accel_range_scale(0.0f),
 	_accel_range_m_s2(0.0f),
 	_accel_topic(nullptr),
-	_accel_orb_class_instance(-1),
+    _gyro_topic(nullptr),
+    _delta_angle_topic(nullptr),
+	_orb_class_instance(-1),
 	_accel_class_instance(-1),
 	_gyro_reports(nullptr),
     _delta_angle_reports(nullptr),
@@ -161,30 +162,18 @@ MPU6000::MPU6000(device::Device *interface, const char *path_accel, const char *
 	default:
 	case MPU_DEVICE_TYPE_MPU6000:
 		_device_id.devid_s.devtype = DRV_ACC_DEVTYPE_MPU6000;
-		/* Prime _gyro with parents devid. */
-		_gyro->_device_id.devid = _device_id.devid;
-		_gyro->_device_id.devid_s.devtype = DRV_GYR_DEVTYPE_MPU6000;
 		break;
 
 	case MPU_DEVICE_TYPE_ICM20602:
 		_device_id.devid_s.devtype = DRV_ACC_DEVTYPE_ICM20602;
-		/* Prime _gyro with parents devid. */
-		_gyro->_device_id.devid = _device_id.devid;
-		_gyro->_device_id.devid_s.devtype = DRV_GYR_DEVTYPE_ICM20602;
 		break;
 
 	case MPU_DEVICE_TYPE_ICM20608:
 		_device_id.devid_s.devtype = DRV_ACC_DEVTYPE_ICM20608;
-		/* Prime _gyro with parents devid. */
-		_gyro->_device_id.devid = _device_id.devid;
-		_gyro->_device_id.devid_s.devtype = DRV_GYR_DEVTYPE_ICM20608;
 		break;
 
 	case MPU_DEVICE_TYPE_ICM20689:
 		_device_id.devid_s.devtype = DRV_ACC_DEVTYPE_ICM20689;
-		/* Prime _gyro with parents devid. */
-		_gyro->_device_id.devid = _device_id.devid;
-		_gyro->_device_id.devid_s.devtype = DRV_GYR_DEVTYPE_ICM20689;
 		break;
 	}
 
@@ -214,9 +203,6 @@ MPU6000::~MPU6000()
 {
 	/* make sure we are truly inactive */
 	stop();
-
-	/* delete the gyro subdriver */
-	delete _gyro;
 
 	/* free any existing reports */
 	if (_accel_reports != nullptr) {
@@ -342,9 +328,6 @@ MPU6000::init()
 		PX4_ERR("IMU_GYRO_CUTOFF param invalid");
 	}
 
-	/* do CDev init for the gyro device node, keep it optional */
-	ret = _gyro->init();
-
 	/* if probe/setup failed, bail now */
 	if (ret != OK) {
 		DEVICE_DEBUG("gyro init failed");
@@ -361,7 +344,7 @@ MPU6000::init()
 
 	/* measurement will have generated a report, publish */
 	_accel_topic = orb_advertise_multi(ORB_ID(sensor_accel), &arp,
-					   &_accel_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
+					   &_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
 
 	if (_accel_topic == nullptr) {
 		PX4_WARN("ADVERT FAIL");
@@ -371,20 +354,20 @@ MPU6000::init()
 	struct gyro_fast_report grp;
 	_gyro_reports->get(&grp);
 
-	_gyro->_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro_fast), &grp,
-			     &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
+	_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro_fast), &grp,
+			     &_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
 
-	if (_gyro->_gyro_topic == nullptr) {
+	if (_gyro_topic == nullptr) {
 		PX4_WARN("ADVERT FAIL");
 	}
     
     struct delta_angle_report darp;
     _delta_angle_reports->get(&darp);
     
-    _gyro->_delta_angle_topic = orb_advertise_multi(ORB_ID(sensor_delta_angle), &darp,
-                                             &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
+    _delta_angle_topic = orb_advertise_multi(ORB_ID(sensor_delta_angle), &darp,
+                                             &_orb_class_instance, (is_external()) ? ORB_PRIO_MAX : ORB_PRIO_HIGH);
     
-    if (_gyro->_delta_angle_topic == nullptr) {
+    if (_delta_angle_topic == nullptr) {
         PX4_WARN("ADVERT FAIL");
     }
 
@@ -1581,7 +1564,7 @@ MPU6000::measure()
     
     grb.timestamp = arb.timestamp = darb.timestamp = hrt_absolute_time();
     /* return device ID */
-    grb.device_id = darb.device_id = arb.device_id = _gyro->_device_id.devid;
+    grb.device_id = darb.device_id = arb.device_id = _device_id.devid;
     
     // report the error count as the sum of the number of bad
     // transfers and bad register reads. This allows the higher
@@ -1597,7 +1580,7 @@ MPU6000::measure()
     downsample_counter++;
     if (downsample_counter >= _gyro_downsample_ratio){//time to report gyro readings
         downsample_counter = 0;
-        orb_publish(ORB_ID(sensor_gyro_fast), _gyro->_gyro_topic, &grb);
+        orb_publish(ORB_ID(sensor_gyro_fast), _gyro_topic, &grb);
     }
     
     //Step 5
@@ -1613,12 +1596,12 @@ MPU6000::measure()
 	/* notify anyone waiting for data */
 	if (gyro_int_notify) {
         _delta_angle_reports->force(&darb);
-		_gyro->parent_poll_notify();
+        poll_notify(POLLIN);
 	}
 
 	if (gyro_int_notify && !(_pub_blocked)) {
 		/* publish it */
-		orb_publish(ORB_ID(sensor_delta_angle), _gyro->_delta_angle_topic, &darb);
+		orb_publish(ORB_ID(sensor_delta_angle), _delta_angle_topic, &darb);
 	}
 
     /* Step 6:
@@ -1868,68 +1851,6 @@ MPU6000::print_registers()
 	printf("\n");
 }
 
-
-MPU6000_gyro::MPU6000_gyro(MPU6000 *parent, const char *path) :
-	CDev("MPU6000_gyro", path),
-	_parent(parent),
-	_gyro_topic(nullptr),
-    _delta_angle_topic(nullptr),
-	_gyro_orb_class_instance(-1),
-	_gyro_class_instance(-1)
-{
-}
-
-MPU6000_gyro::~MPU6000_gyro()
-{
-	if (_gyro_class_instance != -1) {
-		unregister_class_devname(GYRO_BASE_DEVICE_PATH, _gyro_class_instance);
-	}
-}
-
-int
-MPU6000_gyro::init()
-{
-	int ret;
-
-	// do base class init
-	ret = CDev::init();
-
-	/* if probe/setup failed, bail now */
-	if (ret != OK) {
-		DEVICE_DEBUG("gyro init failed");
-		return ret;
-	}
-
-	_gyro_class_instance = register_class_devname(GYRO_BASE_DEVICE_PATH);
-
-	return ret;
-}
-
-void
-MPU6000_gyro::parent_poll_notify()
-{
-	poll_notify(POLLIN);
-}
-
-ssize_t
-MPU6000_gyro::read(struct file *filp, char *buffer, size_t buflen)
-{
-	return _parent->gyro_read(filp, buffer, buflen);
-}
-
-int
-MPU6000_gyro::ioctl(struct file *filp, int cmd, unsigned long arg)
-{
-
-	switch (cmd) {
-	case DEVIOCGDEVICEID:
-		return (int)CDev::ioctl(filp, cmd, arg);
-		break;
-
-	default:
-		return _parent->gyro_ioctl(filp, cmd, arg);
-	}
-}
 
 /**
  * Local functions in support of the shell command.
