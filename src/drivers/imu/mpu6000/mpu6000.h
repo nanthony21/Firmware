@@ -220,9 +220,7 @@ private:
     float            _accel_range_scale;
     float            _accel_range_m_s2;
     orb_advert_t        _accel_topic;
-    orb_advert_t        _gyro_topic;
-    orb_advert_t        _delta_angle_topic;
-    int            _orb_class_instance;
+    int            _accel_orb_class_instance;
     int            _accel_class_instance;
     
     ringbuffer::RingBuffer    *_gyro_reports;
@@ -461,3 +459,39 @@ private:
     MPU6000 operator=(const MPU6000 &);
     
 };
+
+
+
+
+
+/**
+ * Helper class implementing the gyro driver node.
+ */
+class MPU6000_gyro : public device::CDev
+{
+public:
+    MPU6000_gyro(MPU6000 *parent, const char *path);
+    ~MPU6000_gyro();
+    
+    virtual ssize_t        read(struct file *filp, char *buffer, size_t buflen);
+    virtual int        ioctl(struct file *filp, int cmd, unsigned long arg);
+    
+    virtual int        init();
+    
+protected:
+    friend class MPU6000;
+    
+    void            parent_poll_notify();
+    
+private:
+    MPU6000            *_parent;
+    orb_advert_t        _gyro_topic;
+    orb_advert_t        _delta_angle_topic;
+    int            _gyro_orb_class_instance;
+    int            _gyro_class_instance;
+    
+    /* do not allow to copy this class due to pointer data members */
+    MPU6000_gyro(const MPU6000_gyro &);
+    MPU6000_gyro operator=(const MPU6000_gyro &);
+};
+
